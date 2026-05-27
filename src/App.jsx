@@ -14,9 +14,10 @@ const DAY_COLORS = {
 };
 
 const TIMER_PRESETS = [
-  { label: "90 SEK", sublabel: "Isolation", seconds: 90, color: "#06b6d4" },
+  { label: "90 SEK", sublabel: "Isolation", seconds: 90,  color: "#06b6d4" },
   { label: "2 MIN",  sublabel: "Standard",  seconds: 120, color: "#22c55e" },
   { label: "3 MIN",  sublabel: "Compound",  seconds: 180, color: "#f97316" },
+  { label: "⚙️",     sublabel: "Eigene",    seconds: 0,   color: "#a855f7" },
 ];
 
 const STORAGE_KEY = "gainz_v3";
@@ -105,12 +106,16 @@ export default function App() {
   const [bwSaved, setBwSaved] = useState(false);
   const [bodyWeights, setBodyWeights] = useState(() => load("gainz_bodyweight", []));
 
-  // Timer
+  // Timer - real-time based to avoid iOS background drift
   const [timerSeconds, setTimerSeconds] = useState(0);
   const [timerTarget,  setTimerTarget]  = useState(120);
   const [timerRunning, setTimerRunning] = useState(false);
   const [timerDone,    setTimerDone]    = useState(false);
+  const [customTimerInput, setCustomTimerInput] = useState("");
+  const [showCustomInput, setShowCustomInput] = useState(false);
   const intervalRef = useRef(null);
+  const startTimeRef = useRef(null); // real start time
+  const elapsedAtPauseRef = useRef(0); // seconds elapsed when paused
 
   useEffect(() => save(STORAGE_KEY, history), [history]);
   useEffect(() => save(ACTIVE_KEY, workout),  [workout]);
@@ -118,18 +123,20 @@ export default function App() {
 
   useEffect(() => {
     if (timerRunning) {
+      startTimeRef.current = Date.now();
       intervalRef.current = setInterval(() => {
-        setTimerSeconds(s => {
-          if (s + 1 >= timerTarget) {
-            clearInterval(intervalRef.current);
-            setTimerRunning(false);
-            setTimerDone(true);
-            playDoneSound2();
-            return timerTarget;
-          }
-          return s + 1;
-        });
-      }, 1000);
+        const elapsed = elapsedAtPauseRef.current + Math.floor((Date.now() - startTimeRef.current) / 1000);
+        if (elapsed >= timerTarget) {
+          clearInterval(intervalRef.current);
+          setTimerRunning(false);
+          setTimerDone(true);
+          setTimerSeconds(timerTarget);
+          elapsedAtPauseRef.current = 0;
+          playDoneSound2();
+        } else {
+          setTimerSeconds(elapsed);
+        }
+      }, 250); // check 4x per second for accuracy
     } else {
       clearInterval(intervalRef.current);
     }
@@ -141,6 +148,8 @@ export default function App() {
     setTimerRunning(false);
     setTimerDone(false);
     setTimerSeconds(0);
+    elapsedAtPauseRef.current = 0;
+    startTimeRef.current = null;
     if (target !== undefined) setTimerTarget(target);
   };
 
@@ -307,7 +316,10 @@ export default function App() {
         {/* Presets */}
         <div style={{ display:"flex",gap:"8px",padding:"0 24px",marginBottom:"28px" }}>
           {TIMER_PRESETS.map(p => (
-            <button key={p.seconds} onClick={() => resetTimer(p.seconds)} style={{ flex:1,padding:"12px 6px",background:timerTarget===p.seconds?`${p.color}18`:"rgba(255,255,255,0.03)",border:`1px solid ${timerTarget===p.seconds?p.color+"55":"rgba(255,255,255,0.07)"}`,borderRadius:"12px",cursor:"pointer",textAlign:"center",fontFamily:"inherit" }}>
+            <button key={p.label} onClick={() => {
+              if (p.seconds === 0) { setShowCustomInput(true); return; }
+              resetTimer(p.seconds);
+            }} style={{ flex:1,padding:"12px 6px",background:(p.seconds===0?showCustomInput:timerTarget===p.seconds)?`${p.color}18`:"rgba(255,255,255,0.03)",border:`1px solid ${(p.seconds===0?showCustomInput:timerTarget===p.seconds)?p.color+"55":"rgba(255,255,255,0.07)"}`,borderRadius:"12px",cursor:"pointer",textAlign:"center",fontFamily:"inherit" }}>
               <div style={{ fontSize:"16px",fontWeight:"800",color:timerTarget===p.seconds?p.color:"#555" }}>{p.label}</div>
               <div style={{ fontSize:"10px",color:timerTarget===p.seconds?p.color+"aa":"#333",letterSpacing:"1px",marginTop:"2px" }}>{p.sublabel}</div>
             </button>
@@ -348,6 +360,28 @@ export default function App() {
           </div>
         </div>
 
+        {/* Custom timer input */}
+        {showCustomInput && (
+          <div style={{ display:"flex",gap:"8px",padding:"0 24px",marginBottom:"16px" }}>
+            <input
+              type="number"
+              value={customTimerInput}
+              onChange={e => setCustomTimerInput(e.target.value)}
+              placeholder="Sekunden eingeben..."
+              autoFocus
+              style={{ flex:1,padding:"12px",background:"rgba(168,85,247,0.08)",border:"1px solid rgba(168,85,247,0.3)",borderRadius:"12px",color:"#e8e8f0",fontSize:"18px",fontWeight:"700",fontFamily:"inherit",outline:"none",textAlign:"center" }}
+            />
+            <button onClick={() => {
+              const secs = parseInt(customTimerInput);
+              if (secs > 0 && secs <= 3600) {
+                resetTimer(secs);
+                setShowCustomInput(false);
+                setCustomTimerInput("");
+              }
+            }} style={{ padding:"12px 18px",background:"rgba(168,85,247,0.15)",border:"1px solid rgba(168,85,247,0.3)",borderRadius:"12px",color:"#a855f7",fontSize:"16px",fontWeight:"800",fontFamily:"inherit",cursor:"pointer" }}>OK</button>
+          </div>
+        )}
+
         {/* Info */}
         <div style={{ textAlign:"center",padding:"0 32px",marginBottom:"24px",minHeight:"36px" }}>
           {activePreset && <div style={{ fontSize:"13px",color:"#444",lineHeight:1.6 }}>
@@ -359,7 +393,15 @@ export default function App() {
 
         {/* Controls */}
         <div style={{ display:"flex",gap:"12px",padding:"0 24px" }}>
-          <button onClick={() => setTimerRunning(r => !r)} style={{ flex:2,padding:"18px",background:timerRunning?"rgba(255,68,68,0.12)":`${timerColor}22`,border:`1px solid ${timerRunning?"rgba(255,68,68,0.3)":timerColor+"44"}`,borderRadius:"14px",cursor:"pointer",color:timerRunning?"#ff4444":timerColor,fontSize:"20px",fontWeight:"800",letterSpacing:"2px",fontFamily:"inherit" }}>
+          <button onClick={() => {
+            if (timerRunning) {
+              // Pausing - save elapsed
+              elapsedAtPauseRef.current += Math.floor((Date.now() - startTimeRef.current) / 1000);
+              setTimerRunning(false);
+            } else {
+              setTimerRunning(true);
+            }
+          }} style={{ flex:2,padding:"18px",background:timerRunning?"rgba(255,68,68,0.12)":`${timerColor}22`,border:`1px solid ${timerRunning?"rgba(255,68,68,0.3)":timerColor+"44"}`,borderRadius:"14px",cursor:"pointer",color:timerRunning?"#ff4444":timerColor,fontSize:"20px",fontWeight:"800",letterSpacing:"2px",fontFamily:"inherit" }}>
             {timerRunning?"⏸ PAUSE":timerSeconds>0&&!timerDone?"▶ WEITER":"▶ START"}
           </button>
           <button onClick={() => resetTimer()} style={{ flex:1,padding:"18px",background:"rgba(255,255,255,0.04)",border:"1px solid rgba(255,255,255,0.08)",borderRadius:"14px",cursor:"pointer",color:"#555",fontSize:"16px",fontWeight:"700",fontFamily:"inherit" }}>↺ RESET</button>
