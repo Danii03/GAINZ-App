@@ -88,6 +88,47 @@ function playDoneSound() {
 // Simple audio using HTML Audio - works reliably on iOS PWA
 const chimeAudio = typeof Audio !== "undefined" ? new Audio("/chime.wav") : null;
 
+// Confetti particle component
+function Confetti({ active }) {
+  if (!active) return null;
+  const particles = Array.from({ length: 60 }, (_, i) => ({
+    id: i,
+    x: Math.random() * 100,
+    delay: Math.random() * 0.8,
+    duration: 1.5 + Math.random() * 1.5,
+    size: 8 + Math.random() * 8,
+    rotation: Math.random() * 360,
+    color: ["#22c55e","#4ade80","#86efac","#f97316","#a855f7","#06b6d4"][Math.floor(Math.random()*6)],
+    shape: Math.random() > 0.5 ? "circle" : "rect",
+    drift: (Math.random() - 0.5) * 200,
+  }));
+  return (
+    <div style={{ position:"fixed",inset:0,zIndex:999,pointerEvents:"none",overflow:"hidden" }}>
+      <style>{`
+        @keyframes confetti-fall {
+          0%   { transform: translateY(-20px) rotate(0deg) translateX(0); opacity: 1; }
+          80%  { opacity: 1; }
+          100% { transform: translateY(110vh) rotate(720deg) translateX(var(--drift)); opacity: 0; }
+        }
+      `}</style>
+      {particles.map(p => (
+        <div key={p.id} style={{
+          position:"absolute",
+          left: `${p.x}%`,
+          top: "-20px",
+          width: p.shape === "circle" ? `${p.size}px` : `${p.size * 0.6}px`,
+          height: `${p.size}px`,
+          borderRadius: p.shape === "circle" ? "50%" : "2px",
+          background: p.color,
+          "--drift": `${p.drift}px`,
+          animation: `confetti-fall ${p.duration}s ease-in ${p.delay}s forwards`,
+          opacity: 0,
+        }} />
+      ))}
+    </div>
+  );
+}
+
 function playDoneSound2() {
   try {
     if (chimeAudio) {
@@ -132,12 +173,15 @@ export default function App() {
   const [confirmDelete, setConfirmDelete] = useState(null);
   const [confirmCancel, setConfirmCancel] = useState(false);
   const [confirmSwitch, setConfirmSwitch] = useState(null); // day to switch to
-  const [confirmReset, setConfirmReset] = useState(false); // {day, index, name}
+  const [confirmReset, setConfirmReset] = useState(false);
+  const [settingsView, setSettingsView] = useState("main"); // main | plan
+  const [autoTimer, setAutoTimer] = useState(() => load("gainz_autotimer", false)); // {day, index, name}
   const [bwInput, setBwInput] = useState("");
   const [bwSaved, setBwSaved] = useState(false);
   const [bodyWeights, setBodyWeights] = useState(() => load("gainz_bodyweight", []));
 
   // Timer - real-time based to avoid iOS background drift
+  const [showConfetti, setShowConfetti] = useState(false);
   const [timerSeconds, setTimerSeconds] = useState(0);
   const [timerTarget,  setTimerTarget]  = useState(120);
   const [timerRunning, setTimerRunning] = useState(false);
@@ -151,6 +195,7 @@ export default function App() {
   useEffect(() => save(STORAGE_KEY, history), [history]);
   useEffect(() => save(ACTIVE_KEY, workout),  [workout]);
   useEffect(() => save(PLAN_KEY, plan), [plan]);
+  useEffect(() => save("gainz_autotimer", autoTimer), [autoTimer]);
 
   useEffect(() => {
     if (timerRunning) {
@@ -164,6 +209,13 @@ export default function App() {
           setTimerSeconds(timerTarget);
           elapsedAtPauseRef.current = 0;
           playDoneSound2();
+          setShowConfetti(true);
+          setTimeout(() => setShowConfetti(false), 3500);
+          // Auto-reset after 5 seconds
+          setTimeout(() => {
+            setTimerDone(false);
+            setTimerSeconds(0);
+          }, 5000);
         } else {
           setTimerSeconds(elapsed);
         }
@@ -227,14 +279,21 @@ export default function App() {
     setTab("workout");
   };
   const updateWeight  = (name, val) => setWorkout(w => ({ ...w, exercises: { ...w.exercises, [name]: { ...w.exercises[name], weight: val } } }));
-  const logReps = (name, reps) => setWorkout(w => {
-    const ex = { ...w.exercises[name] };
-    const sets = [...ex.sets];
-    sets[ex.activeSet] = reps;
-    let next = ex.activeSet;
-    for (let i = 0; i < 3; i++) { if (sets[i] === null) { next = i; break; } }
-    return { ...w, exercises: { ...w.exercises, [name]: { ...ex, sets, activeSet: next } } };
-  });
+  const logReps = (name, reps) => {
+    setWorkout(w => {
+      const ex = { ...w.exercises[name] };
+      const sets = [...ex.sets];
+      sets[ex.activeSet] = reps;
+      let next = ex.activeSet;
+      for (let i = 0; i < 3; i++) { if (sets[i] === null) { next = i; break; } }
+      return { ...w, exercises: { ...w.exercises, [name]: { ...ex, sets, activeSet: next } } };
+    });
+    // Auto-start rest timer if enabled - no tab switch
+    if (autoTimer) {
+      resetTimer(120);
+      setTimeout(() => setTimerRunning(true), 50);
+    }
+  };
   const selectSet  = (name, i) => setWorkout(w => ({ ...w, exercises: { ...w.exercises, [name]: { ...w.exercises[name], activeSet: i } } }));
   const toggleDone = (name)    => setWorkout(w => ({ ...w, exercises: { ...w.exercises, [name]: { ...w.exercises[name], done: !w.exercises[name].done } } }));
   const finishWorkout = () => {
@@ -290,7 +349,7 @@ export default function App() {
           </button>
         )}
         <div style={{ background:"rgba(8,8,16,0.97)",borderTop:"1px solid rgba(255,255,255,0.06)",display:"flex",padding:"10px 16px 24px",gap:"8px",backdropFilter:"blur(16px)" }}>
-          {[{id:"home",label:"HOME",icon:"⚡"},{id:"timer",label:"TIMER",icon:"⏱"},{id:"history",label:"VERLAUF",icon:"📊"},{id:"settings",label:"PLAN",icon:"⚙️"}].map(t => (
+          {[{id:"home",label:"HOME",icon:"⚡"},{id:"timer",label:"TIMER",icon:"⏱"},{id:"history",label:"VERLAUF",icon:"📊"},{id:"settings",label:"",icon:"⚙️"}].map(t => (
             <button key={t.id} onClick={() => {
               if (t.id === "home" && workout) {
                 if (activeDay) setTab("workout");
@@ -486,6 +545,7 @@ export default function App() {
           </button>
           <button onClick={() => resetTimer()} style={{ flex:1,padding:"18px",background:"rgba(255,255,255,0.04)",border:"1px solid rgba(255,255,255,0.08)",borderRadius:"14px",cursor:"pointer",color:"#555",fontSize:"16px",fontWeight:"700",fontFamily:"inherit" }}>↺ RESET</button>
         </div>
+        <Confetti active={showConfetti} />
         <BottomNav />
       </div>
     );
@@ -629,6 +689,7 @@ export default function App() {
           </div>
         )}
 
+        <Confetti active={showConfetti} />
         <BottomNav />
       </div>
     );
@@ -985,22 +1046,63 @@ export default function App() {
 
   // ── SETTINGS ──
   if (tab === "settings") {
+    // Main settings view
+    if (settingsView === "main") {
+      return (
+        <div style={base}><style>{G}</style>
+          <div style={{ padding:"48px 24px 20px" }}>
+            <div style={{ fontSize:"11px",letterSpacing:"4px",color:"#444",marginBottom:"6px" }}>EINSTELLUNGEN</div>
+            <div style={{ fontSize:"36px",fontWeight:"800",letterSpacing:"-1px" }}>⚙️<span style={{ color:"#f97316" }}>.</span></div>
+          </div>
+          <div style={{ padding:"0 24px" }}>
+            {/* Plan button */}
+            <button onClick={() => setSettingsView("plan")} style={{ width:"100%",padding:"20px",background:"rgba(255,255,255,0.04)",border:"1px solid rgba(255,255,255,0.08)",borderRadius:"16px",marginBottom:"12px",display:"flex",justifyContent:"space-between",alignItems:"center",cursor:"pointer",fontFamily:"inherit" }}>
+              <div style={{ textAlign:"left" }}>
+                <div style={{ fontSize:"11px",color:"#555",letterSpacing:"2px",marginBottom:"4px" }}>TRAININGSPLAN</div>
+                <div style={{ fontSize:"20px",fontWeight:"800",color:"#e8e8f0" }}>Plan bearbeiten →</div>
+                <div style={{ fontSize:"12px",color:"#555",marginTop:"2px" }}>Übungen, Reihenfolge & Sets</div>
+              </div>
+              <div style={{ fontSize:"28px" }}>📋</div>
+            </button>
+            {/* Auto timer toggle */}
+            <div style={{ padding:"20px",background:"rgba(255,255,255,0.04)",border:"1px solid rgba(255,255,255,0.08)",borderRadius:"16px" }}>
+              <div style={{ display:"flex",justifyContent:"space-between",alignItems:"center" }}>
+                <div style={{ flex:1 }}>
+                  <div style={{ fontSize:"11px",color:"#555",letterSpacing:"2px",marginBottom:"4px" }}>AUTOMATISCHER TIMER</div>
+                  <div style={{ fontSize:"18px",fontWeight:"700",color:"#e8e8f0" }}>Satzpause Auto-Start</div>
+                  <div style={{ fontSize:"12px",color:"#555",marginTop:"4px",lineHeight:1.5 }}>Nach jedem Satz startet automatisch ein 2 Min Timer.</div>
+                </div>
+                <div onClick={() => setAutoTimer(v => !v)} style={{ width:"52px",height:"30px",borderRadius:"15px",background:autoTimer?"#06b6d4":"rgba(255,255,255,0.1)",border:`1px solid ${autoTimer?"#06b6d4":"rgba(255,255,255,0.15)"}`,cursor:"pointer",position:"relative",transition:"all 0.25s",flexShrink:0,marginLeft:"16px" }}>
+                  <div style={{ position:"absolute",top:"3px",left:autoTimer?"24px":"3px",width:"22px",height:"22px",borderRadius:"50%",background:"white",transition:"left 0.25s",boxShadow:"0 1px 4px rgba(0,0,0,0.3)" }} />
+                </div>
+              </div>
+            </div>
+          </div>
+          <BottomNav />
+        </div>
+      );
+    }
+
+    // Plan edit view
     return (
       <div style={base}><style>{G}</style>
-        <div style={{ padding:"48px 24px 20px" }}>
-          <div style={{ fontSize:"11px",letterSpacing:"4px",color:"#444",marginBottom:"6px" }}>EINSTELLUNGEN</div>
-          <div style={{ fontSize:"36px",fontWeight:"800",letterSpacing:"-1px" }}>PLAN<span style={{ color:"#f97316" }}>.</span></div>
+        <div style={{ padding:"40px 24px 16px",display:"flex",justifyContent:"space-between",alignItems:"flex-end",borderBottom:"1px solid rgba(255,255,255,0.06)" }}>
+          <div>
+            <div style={{ fontSize:"11px",letterSpacing:"4px",color:"#444",marginBottom:"4px" }}>EINSTELLUNGEN</div>
+            <div style={{ fontSize:"28px",fontWeight:"800" }}>PLAN<span style={{ color:"#f97316" }}>.</span></div>
+          </div>
+          <button onClick={() => setSettingsView("main")} style={{ padding:"8px 14px",background:"rgba(255,255,255,0.05)",border:"1px solid rgba(255,255,255,0.1)",borderRadius:"10px",color:"#888",fontSize:"13px",fontFamily:"inherit",cursor:"pointer",marginBottom:"6px" }}>← ZURÜCK</button>
         </div>
 
         {/* Day tabs */}
-        <div style={{ display:"flex",gap:"8px",padding:"0 24px",marginBottom:"20px" }}>
+        <div style={{ display:"flex",gap:"8px",padding:"16px 24px 0" }}>
           {Object.entries(DAY_COLORS).map(([day,dc]) => (
-            <button key={day} onClick={() => { setEditDay(day); setNewExName(""); setSwipedEx(null); }} style={{ flex:1,padding:"10px 6px",background:editDay===day?dc.dim:"rgba(255,255,255,0.03)",border:`1px solid ${editDay===day?dc.border:"rgba(255,255,255,0.07)"}`,borderRadius:"10px",color:editDay===day?dc.accent:"#555",fontSize:"13px",fontWeight:"700",letterSpacing:"1px",fontFamily:"inherit",cursor:"pointer" }}>{day.toUpperCase()}</button>
+            <button key={day} onClick={() => { setEditDay(day); setNewExName(""); }} style={{ flex:1,padding:"10px 6px",background:editDay===day?dc.dim:"rgba(255,255,255,0.03)",border:`1px solid ${editDay===day?dc.border:"rgba(255,255,255,0.07)"}`,borderRadius:"10px",color:editDay===day?dc.accent:"#555",fontSize:"13px",fontWeight:"700",letterSpacing:"1px",fontFamily:"inherit",cursor:"pointer" }}>{day.toUpperCase()}</button>
           ))}
         </div>
 
         <div style={{ padding:"0 24px" }}>
-          <div style={{ fontSize:"11px",color:"#444",letterSpacing:"2px",marginBottom:"10px" }}>▲▼ REIHENFOLGE · −/+ SETS · 🗑 LÖSCHEN</div>
+          <div style={{ fontSize:"11px",color:"#444",letterSpacing:"2px",margin:"14px 0 10px" }}>▲▼ REIHENFOLGE · −/+ SETS · 🗑 LÖSCHEN</div>
 
           {(plan[editDay]||[]).map((exObj, i) => {
             const exName = exObj.name||exObj;
@@ -1052,6 +1154,7 @@ export default function App() {
             );
           })}
 
+
           {/* Add new exercise */}
           <div style={{ marginTop:"20px",fontSize:"11px",color:"#444",letterSpacing:"2px",marginBottom:"10px" }}>NEUE ÜBUNG</div>
           <div style={{ display:"flex",gap:"8px" }}>
@@ -1073,6 +1176,7 @@ export default function App() {
               setNewExName("");
             }} style={{ width:"52px",height:"52px",background:DAY_COLORS[editDay].dim,border:`1px solid ${DAY_COLORS[editDay].border}`,borderRadius:"12px",color:DAY_COLORS[editDay].accent,fontSize:"24px",cursor:"pointer",fontFamily:"inherit",fontWeight:"800",display:"flex",alignItems:"center",justifyContent:"center" }}>+</button>
           </div>
+
 
           {/* Reset */}
           <button onClick={() => setConfirmReset(true)} style={{ width:"100%",marginTop:"24px",padding:"12px",background:"transparent",border:"1px dashed rgba(255,255,255,0.08)",borderRadius:"10px",color:"#333",fontSize:"12px",fontFamily:"inherit",cursor:"pointer",letterSpacing:"1px" }}>
@@ -1117,6 +1221,7 @@ export default function App() {
             </div>
           </div>
         )}
+
 
         <BottomNav />
       </div>
@@ -1175,5 +1280,5 @@ export default function App() {
     );
   }
 
-  return null;
+  return <Confetti active={showConfetti} />;
 }
