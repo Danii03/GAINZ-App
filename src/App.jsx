@@ -60,6 +60,37 @@ function playDoneSound() {
   } catch (e) {}
 }
 
+// Global audio context - must be created on user gesture
+let audioCtx = null;
+function unlockAudio() {
+  if (!audioCtx) {
+    audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+  }
+  if (audioCtx.state === "suspended") audioCtx.resume();
+}
+
+function playDoneSound2() {
+  try {
+    unlockAudio();
+    const ctx = audioCtx;
+    const notes = [523.25, 659.25, 783.99, 1046.5];
+    notes.forEach((freq, i) => {
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      osc.connect(gain);
+      gain.connect(ctx.destination);
+      osc.type = "sine";
+      osc.frequency.value = freq;
+      const t = ctx.currentTime + i * 0.18;
+      gain.gain.setValueAtTime(0, t);
+      gain.gain.linearRampToValueAtTime(0.4, t + 0.04);
+      gain.gain.exponentialRampToValueAtTime(0.001, t + 1.0);
+      osc.start(t);
+      osc.stop(t + 1.0);
+    });
+  } catch (e) { console.log("Audio error:", e); }
+}
+
 export default function App() {
   const [tab, setTab]             = useState("home");
   const [activeDay, setActiveDay] = useState(null);
@@ -112,7 +143,7 @@ export default function App() {
             clearInterval(intervalRef.current);
             setTimerRunning(false);
             setTimerDone(true);
-            playDoneSound();
+            playDoneSound2();
             return timerTarget;
           }
           return s + 1;
@@ -196,6 +227,8 @@ export default function App() {
     @keyframes done-ring  { 0%{transform:scale(1);opacity:.5} 50%{transform:scale(1.06);opacity:.15} 100%{transform:scale(1);opacity:.5} }
   `;
   const base = { minHeight:"100vh", background:"#080810", fontFamily:"'Barlow Condensed','Arial Narrow',sans-serif", color:"#e8e8f0", paddingBottom:"80px" };
+  // Unlock audio on first interaction
+  const handleFirstTouch = () => unlockAudio();
 
   const BottomNav = () => {
     const showBanner = (timerRunning || (timerSeconds > 0 && !timerDone)) && tab !== "timer";
@@ -535,11 +568,70 @@ export default function App() {
       return { text: "Stabil", color:"#06b6d4", emoji:"→" };
     })();
 
+    const exportData = () => {
+      const data = {
+        version: 1,
+        exportedAt: new Date().toISOString(),
+        history,
+        bodyWeights,
+        plan,
+      };
+      const blob = new Blob([JSON.stringify(data, null, 2)], { type: "application/json" });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `gainz-backup-${new Date().toISOString().slice(0,10)}.gainz`;
+      a.click();
+      URL.revokeObjectURL(url);
+    };
+
+    const importData = (e) => {
+      const file = e.target.files[0];
+      if (!file) return;
+      const reader = new FileReader();
+      reader.onload = (ev) => {
+        try {
+          const data = JSON.parse(ev.target.result);
+          if (data.version !== 1) { alert("Ungültige Datei!"); return; }
+          if (window.confirm("Alle aktuellen Daten werden überschrieben. Fortfahren?")) {
+            if (data.history) { setHistory(data.history); save(STORAGE_KEY, data.history); }
+            if (data.bodyWeights) { setBodyWeights(data.bodyWeights); save("gainz_bodyweight", data.bodyWeights); }
+            if (data.plan) { setPlan(data.plan); save(PLAN_KEY, data.plan); }
+            alert("✅ Daten erfolgreich importiert!");
+          }
+        } catch { alert("Fehler beim Importieren – ungültige .gainz Datei."); }
+      };
+      reader.readAsText(file);
+      e.target.value = "";
+    };
+
     return (
       <div style={base}><style>{G}</style>
-        <div style={{ padding:"40px 24px 20px" }}>
-          <div style={{ fontSize:"11px",letterSpacing:"4px",color:"#444",marginBottom:"6px" }}>TRAININGS</div>
-          <div style={{ fontSize:"36px",fontWeight:"800",letterSpacing:"-1px" }}>VERLAUF<span style={{ color:"#f97316" }}>.</span></div>
+        <div style={{ padding:"40px 24px 16px",display:"flex",justifyContent:"space-between",alignItems:"flex-end" }}>
+          <div>
+            <div style={{ fontSize:"11px",letterSpacing:"4px",color:"#444",marginBottom:"6px" }}>TRAININGS</div>
+            <div style={{ fontSize:"36px",fontWeight:"800",letterSpacing:"-1px" }}>VERLAUF<span style={{ color:"#f97316" }}>.</span></div>
+          </div>
+          {/* Export / Import */}
+          <div style={{ display:"flex",gap:"6px",marginBottom:"6px" }}>
+            <button onClick={exportData} title="Daten exportieren" style={{
+              padding:"8px 12px",background:"rgba(255,255,255,0.04)",
+              border:"1px solid rgba(255,255,255,0.1)",borderRadius:"10px",
+              color:"#666",fontSize:"13px",cursor:"pointer",fontFamily:"inherit",
+              display:"flex",alignItems:"center",gap:"5px"
+            }}>
+              <span>⬆️</span><span style={{ fontSize:"11px",letterSpacing:"1px",fontWeight:"700" }}>EXPORT</span>
+            </button>
+            <label title="Daten importieren" style={{
+              padding:"8px 12px",background:"rgba(255,255,255,0.04)",
+              border:"1px solid rgba(255,255,255,0.1)",borderRadius:"10px",
+              color:"#666",fontSize:"13px",cursor:"pointer",fontFamily:"inherit",
+              display:"flex",alignItems:"center",gap:"5px"
+            }}>
+              <span>⬇️</span><span style={{ fontSize:"11px",letterSpacing:"1px",fontWeight:"700" }}>IMPORT</span>
+              <input type="file" accept=".gainz" onChange={importData} style={{ display:"none" }} />
+            </label>
+          </div>
         </div>
 
         {/* ── KÖRPERGEWICHT CARD ── */}
