@@ -60,34 +60,15 @@ function playDoneSound() {
   } catch (e) {}
 }
 
-// Global audio context - must be created on user gesture
-let audioCtx = null;
-function unlockAudio() {
-  if (!audioCtx) {
-    audioCtx = new (window.AudioContext || window.webkitAudioContext)();
-  }
-  if (audioCtx.state === "suspended") audioCtx.resume();
-}
+// Simple audio using HTML Audio - works reliably on iOS PWA
+const chimeAudio = typeof Audio !== "undefined" ? new Audio("/chime.wav") : null;
 
 function playDoneSound2() {
   try {
-    unlockAudio();
-    const ctx = audioCtx;
-    const notes = [523.25, 659.25, 783.99, 1046.5];
-    notes.forEach((freq, i) => {
-      const osc = ctx.createOscillator();
-      const gain = ctx.createGain();
-      osc.connect(gain);
-      gain.connect(ctx.destination);
-      osc.type = "sine";
-      osc.frequency.value = freq;
-      const t = ctx.currentTime + i * 0.18;
-      gain.gain.setValueAtTime(0, t);
-      gain.gain.linearRampToValueAtTime(0.4, t + 0.04);
-      gain.gain.exponentialRampToValueAtTime(0.001, t + 1.0);
-      osc.start(t);
-      osc.stop(t + 1.0);
-    });
+    if (chimeAudio) {
+      chimeAudio.currentTime = 0;
+      chimeAudio.play().catch(e => console.log("Audio blocked:", e));
+    }
   } catch (e) { console.log("Audio error:", e); }
 }
 
@@ -227,8 +208,6 @@ export default function App() {
     @keyframes done-ring  { 0%{transform:scale(1);opacity:.5} 50%{transform:scale(1.06);opacity:.15} 100%{transform:scale(1);opacity:.5} }
   `;
   const base = { minHeight:"100vh", background:"#080810", fontFamily:"'Barlow Condensed','Arial Narrow',sans-serif", color:"#e8e8f0", paddingBottom:"80px" };
-  // Unlock audio on first interaction
-  const handleFirstTouch = () => unlockAudio();
 
   const BottomNav = () => {
     const showBanner = (timerRunning || (timerSeconds > 0 && !timerDone)) && tab !== "timer";
