@@ -1,10 +1,34 @@
 import { useState, useEffect, useRef } from "react";
 
 const DEFAULT_PLAN = {
-  Push: ["Chest Press","Schrägbankdrücken","Butterflies","Schulterdrücken","Seitenheben","Overhead Triceps Extensions","Tricep Pushdowns"],
-  Pull: ["Latzug","Klimmzüge","Rudern an Maschine","Face Pulls","Preacher Curls","Hammer Curls","Rückenstrecken"],
-  Legs: ["Leg Press","Beinstrecker","Beinbeuger","Wadenheben","Plank","Bauchcurls","Abductor Ziehen","Abductor Stossen"],
+  Push: [
+    {name:"Chest Press",sets:3},{name:"Schrägbankdrücken",sets:3},{name:"Butterflies",sets:3},
+    {name:"Schulterdrücken",sets:3},{name:"Seitenheben",sets:3},
+    {name:"Overhead Triceps Extensions",sets:3},{name:"Tricep Pushdowns",sets:3}
+  ],
+  Pull: [
+    {name:"Latzug",sets:3},{name:"Klimmzüge",sets:3},{name:"Rudern an Maschine",sets:3},
+    {name:"Face Pulls",sets:3},{name:"Preacher Curls",sets:3},
+    {name:"Hammer Curls",sets:3},{name:"Rückenstrecken",sets:3}
+  ],
+  Legs: [
+    {name:"Leg Press",sets:3},{name:"Beinstrecker",sets:3},{name:"Beinbeuger",sets:3},
+    {name:"Wadenheben",sets:3},{name:"Plank",sets:3},{name:"Bauchcurls",sets:3},
+    {name:"Abductor Ziehen",sets:3},{name:"Abductor Stossen",sets:3}
+  ],
 };
+
+// Migrate old string-based plan to object-based
+function migratePlan(p) {
+  if (!p) return DEFAULT_PLAN;
+  const migrated = {};
+  Object.keys(p).forEach(day => {
+    migrated[day] = (p[day]||[]).map(ex =>
+      typeof ex === "string" ? { name: ex, sets: 3 } : ex
+    );
+  });
+  return migrated;
+}
 const PLAN_KEY = "gainz_plan";
 
 const DAY_COLORS = {
@@ -88,20 +112,25 @@ export default function App() {
       w.exercises["Klimmzüge"] = { weight: "", sets: [null,null,null], done: false, activeSet: 0 };
     }
     // Migration: add any missing exercises from current plan
-    const allExercises = ["Chest Press","Schrägbankdrücken","Butterflies","Schulterdrücken","Seitenheben","Overhead Triceps Extensions","Tricep Pushdowns","Latzug","Klimmzüge","Rudern an Maschine","Face Pulls","Preacher Curls","Hammer Curls","Rückenstrecken","Leg Press","Beinstrecker","Beinbeuger","Wadenheben","Plank","Bauchcurls","Abductor Ziehen","Abductor Stossen"];
-    allExercises.forEach(name => {
+    // Add missing exercises from plan
+    const currentPlan = migratePlan(load(PLAN_KEY, DEFAULT_PLAN));
+    Object.values(currentPlan).flat().forEach(exObj => {
+      const name = exObj.name||exObj;
       if (!w.exercises[name]) {
-        w.exercises[name] = { weight: "", sets: [null,null,null], done: false, activeSet: 0 };
+        const numSets = Math.min(Math.max(exObj.sets||3, 1), 3);
+        w.exercises[name] = { weight: "", sets: Array(numSets).fill(null), done: false, activeSet: 0 };
       }
     });
     return w;
   });
   const [historyDay, setHistoryDay] = useState("Push");
-  const [plan, setPlan] = useState(() => load(PLAN_KEY, DEFAULT_PLAN));
+  const [plan, setPlan] = useState(() => migratePlan(load(PLAN_KEY, DEFAULT_PLAN)));
   const [editingPlan, setEditingPlan] = useState(false);
   const [editDay, setEditDay] = useState("Push");
   const [newExName, setNewExName] = useState("");
-  const [confirmDelete, setConfirmDelete] = useState(null); // {day, index, name}
+  const [confirmDelete, setConfirmDelete] = useState(null);
+  const [confirmCancel, setConfirmCancel] = useState(false);
+  const [confirmReset, setConfirmReset] = useState(false); // {day, index, name}
   const [bwInput, setBwInput] = useState("");
   const [bwSaved, setBwSaved] = useState(false);
   const [bodyWeights, setBodyWeights] = useState(() => load("gainz_bodyweight", []));
@@ -158,8 +187,9 @@ export default function App() {
     if (workout && workout.day === day) {
       // Resume but sync exercises with current plan
       const synced = { ...workout.exercises };
-      plan[day].forEach(name => {
-        if (!synced[name]) synced[name] = { weight: "", sets: [null,null,null], done: false, activeSet: 0 };
+      plan[day].forEach(ex => {
+        const name = ex.name || ex;
+        if (!synced[name]) synced[name] = { weight: "", sets: Array(ex.sets||3).fill(null), done: false, activeSet: 0 };
       });
       setWorkout(w => ({ ...w, exercises: synced }));
       setActiveDay(day);
@@ -167,15 +197,24 @@ export default function App() {
       return;
     }
     const ex = {};
-    plan[day].forEach(name => { ex[name] = { weight: "", sets: [null,null,null], done: false, activeSet: 0 }; });
+    plan[day].forEach(exObj => { const n = exObj.name||exObj; const numSets = Math.min(Math.max(exObj.sets||3, 1), 3); ex[n] = { weight: "", sets: Array(numSets).fill(null), done: false, activeSet: 0 }; });
     setWorkout({ day, startedAt: new Date().toISOString(), exercises: ex });
     setActiveDay(day);
     setTab("workout");
   };
   const resumeWorkout = () => {
     const synced = { ...(workout?.exercises || {}) };
-    plan[workout.day].forEach(name => {
-      if (!synced[name]) synced[name] = { weight: "", sets: [null,null,null], done: false, activeSet: 0 };
+    plan[workout.day].forEach(exObj => {
+      const name = exObj.name||exObj;
+      const numSets = Math.min(Math.max(exObj.sets||3, 1), 3);
+      if (!synced[name]) {
+        synced[name] = { weight: "", sets: Array(numSets).fill(null), done: false, activeSet: 0 };
+      } else if (synced[name].sets.length !== numSets) {
+        // Resize sets array to match plan, preserving existing values
+        const old = synced[name].sets;
+        synced[name].sets = Array(numSets).fill(null).map((_, i) => old[i] ?? null);
+        if (synced[name].activeSet >= numSets) synced[name].activeSet = numSets - 1;
+      }
     });
     setWorkout(w => ({ ...w, exercises: synced }));
     setActiveDay(workout.day);
@@ -195,7 +234,7 @@ export default function App() {
   const finishWorkout = () => {
     const newHist = { ...history };
     const entry = { date: new Date().toISOString(), exercises: {} };
-    Object.entries(workout.exercises).forEach(([name, data]) => { entry.exercises[name] = { weight: data.weight, sets: data.sets }; });
+    Object.entries(workout.exercises).forEach(([name, data]) => { entry.exercises[name] = { weight: data.weight, sets: data.sets, numSets: data.sets.length }; });
     newHist[workout.day] = [...(newHist[workout.day] || []), entry];
     setHistory(newHist);
     setHistoryDay(workout.day);
@@ -414,7 +453,7 @@ export default function App() {
   // ── WORKOUT ──
   if (tab === "workout" && workout) {
     const exercises = workout.exercises;
-    const currentExercises = plan[activeDay] || [];
+    const currentExercises = (plan[activeDay] || []).map(ex => ex.name||ex);
     const allDone   = currentExercises.every(n => exercises[n]?.done);
     const doneCnt   = currentExercises.filter(n => exercises[n]?.done).length;
     const total     = currentExercises.length;
@@ -428,7 +467,10 @@ export default function App() {
               <div style={{ fontSize:"11px",letterSpacing:"3px",color:colors.accent }}>{activeDay==="Push"?"MONTAG":activeDay==="Pull"?"MITTWOCH":"FREITAG"} · {doneCnt}/{total}</div>
               <div style={{ fontSize:"28px",fontWeight:"800" }}>{activeDay.toUpperCase()} DAY</div>
             </div>
-            <button onClick={() => setTab("home")} style={{ padding:"8px 14px",background:"rgba(255,255,255,0.05)",border:"1px solid rgba(255,255,255,0.1)",borderRadius:"8px",color:"#888",fontSize:"13px",fontFamily:"inherit",cursor:"pointer" }}>← HOME</button>
+            <div style={{ display:"flex",gap:"8px" }}>
+              <button onClick={() => setConfirmCancel(true)} style={{ padding:"8px 12px",background:"rgba(255,68,68,0.08)",border:"1px solid rgba(255,68,68,0.2)",borderRadius:"8px",color:"#ff4444",fontSize:"12px",fontFamily:"inherit",cursor:"pointer",fontWeight:"700",letterSpacing:"0.5px" }}>✕ ABBRECHEN</button>
+              <button onClick={() => setTab("home")} style={{ padding:"8px 14px",background:"rgba(255,255,255,0.05)",border:"1px solid rgba(255,255,255,0.1)",borderRadius:"8px",color:"#888",fontSize:"13px",fontFamily:"inherit",cursor:"pointer" }}>← HOME</button>
+            </div>
           </div>
           <div style={{ marginTop:"10px",height:"3px",background:"rgba(255,255,255,0.06)",borderRadius:"2px" }}>
             <div style={{ height:"100%",borderRadius:"2px",background:colors.accent,width:`${(doneCnt/total)*100}%`,transition:"width 0.4s ease" }} />
@@ -532,6 +574,20 @@ export default function App() {
             {allDone?"🏁 WORKOUT FERTIG!":`NOCH ${currentExercises.filter(n => !exercises[n]?.done).length} ÜBUNGEN OFFEN`}
           </button>
         </div>
+        {/* Cancel workout modal */}
+        {confirmCancel && (
+          <div style={{ position:"fixed",inset:0,background:"rgba(0,0,0,0.85)",zIndex:300,display:"flex",alignItems:"flex-end" }}>
+            <div style={{ width:"100%",background:"#0d0d18",borderRadius:"20px 20px 0 0",padding:"28px 24px 48px" }}>
+              <div style={{ fontSize:"20px",fontWeight:"700",marginBottom:"8px" }}>Workout abbrechen?</div>
+              <div style={{ fontSize:"15px",color:"#666",marginBottom:"24px" }}>Alle Einträge dieser Session gehen verloren.</div>
+              <div style={{ display:"flex",gap:"12px" }}>
+                <button onClick={() => setConfirmCancel(false)} style={{ flex:1,padding:"16px",background:"rgba(255,255,255,0.06)",border:"1px solid rgba(255,255,255,0.1)",borderRadius:"12px",color:"#aaa",fontSize:"16px",fontWeight:"700",fontFamily:"inherit",cursor:"pointer" }}>WEITER TRAINIEREN</button>
+                <button onClick={() => { setWorkout(null); setActiveDay(null); setConfirmCancel(false); setTab("home"); }} style={{ flex:1,padding:"16px",background:"rgba(255,68,68,0.12)",border:"1px solid rgba(255,68,68,0.3)",borderRadius:"12px",color:"#ff4444",fontSize:"16px",fontWeight:"800",fontFamily:"inherit",cursor:"pointer" }}>ABBRECHEN ✕</button>
+              </div>
+            </div>
+          </div>
+        )}
+
         <BottomNav />
       </div>
     );
@@ -546,7 +602,8 @@ export default function App() {
     // Total volume per session for this day
     const sessionVolumes = dayHist.map(session => {
       let total = 0;
-      plan[historyDay].forEach(name => {
+      plan[historyDay].forEach(exObj => {
+        const name = exObj.name||exObj;
         const ex = session.exercises[name];
         if (!ex || name === "Plank") return;
         const w = parseFloat(ex.weight) || 0;
@@ -897,14 +954,57 @@ export default function App() {
         </div>
 
         <div style={{ padding:"0 24px" }}>
-          <div style={{ fontSize:"11px",color:"#444",letterSpacing:"2px",marginBottom:"10px" }}>ÜBUNGEN – NACH LINKS SWIPEN ZUM LÖSCHEN</div>
+          <div style={{ fontSize:"11px",color:"#444",letterSpacing:"2px",marginBottom:"10px" }}>▲▼ REIHENFOLGE · −/+ SETS · 🗑 LÖSCHEN</div>
 
-          {(plan[editDay]||[]).map((name, i) => (
-            <div key={i} style={{ display:"flex",justifyContent:"space-between",alignItems:"center",padding:"14px 16px",background:"rgba(255,255,255,0.04)",border:"1px solid rgba(255,255,255,0.07)",borderRadius:"12px",marginBottom:"8px" }}>
-              <div style={{ fontSize:"16px",fontWeight:"600" }}>{name}</div>
-              <button onClick={() => setConfirmDelete({ day: editDay, index: i, name })} style={{ width:"36px",height:"36px",borderRadius:"10px",background:"rgba(255,68,68,0.1)",border:"1px solid rgba(255,68,68,0.2)",color:"#ff4444",fontSize:"18px",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center" }}>🗑</button>
-            </div>
-          ))}
+          {(plan[editDay]||[]).map((exObj, i) => {
+            const exName = exObj.name||exObj;
+            const exSets = exObj.sets||3;
+            const dc = DAY_COLORS[editDay];
+            return (
+              <div key={i} style={{ background:"rgba(255,255,255,0.04)",border:"1px solid rgba(255,255,255,0.07)",borderRadius:"12px",marginBottom:"8px",overflow:"hidden" }}>
+                <div style={{ display:"flex",justifyContent:"space-between",alignItems:"center",padding:"12px 14px" }}>
+                  {/* Up/down arrows for reordering */}
+                  <div style={{ display:"flex",flexDirection:"column",gap:"2px",marginRight:"10px" }}>
+                    <button onClick={() => {
+                      if (i === 0) return;
+                      const arr = [...plan[editDay]];
+                      [arr[i-1], arr[i]] = [arr[i], arr[i-1]];
+                      setPlan({ ...plan, [editDay]: arr });
+                    }} style={{ width:"24px",height:"22px",borderRadius:"5px",background:i===0?"transparent":"rgba(255,255,255,0.06)",border:i===0?"none":"1px solid rgba(255,255,255,0.1)",color:i===0?"#333":"#aaa",fontSize:"11px",cursor:i===0?"default":"pointer",display:"flex",alignItems:"center",justifyContent:"center" }}>▲</button>
+                    <button onClick={() => {
+                      if (i === plan[editDay].length-1) return;
+                      const arr = [...plan[editDay]];
+                      [arr[i+1], arr[i]] = [arr[i], arr[i+1]];
+                      setPlan({ ...plan, [editDay]: arr });
+                    }} style={{ width:"24px",height:"22px",borderRadius:"5px",background:i===plan[editDay].length-1?"transparent":"rgba(255,255,255,0.06)",border:i===plan[editDay].length-1?"none":"1px solid rgba(255,255,255,0.1)",color:i===plan[editDay].length-1?"#333":"#aaa",fontSize:"11px",cursor:i===plan[editDay].length-1?"default":"pointer",display:"flex",alignItems:"center",justifyContent:"center" }}>▼</button>
+                  </div>
+                  {/* Name */}
+                  <div style={{ flex:1,fontSize:"15px",fontWeight:"600" }}>{exName}</div>
+                  {/* Sets selector */}
+                  <div style={{ display:"flex",alignItems:"center",gap:"6px",marginRight:"10px" }}>
+                    <button onClick={() => {
+                      if (exSets <= 1) return;
+                      const arr = [...plan[editDay]];
+                      arr[i] = { name: exName, sets: exSets - 1 };
+                      setPlan({ ...plan, [editDay]: arr });
+                    }} style={{ width:"26px",height:"26px",borderRadius:"6px",background:"rgba(255,255,255,0.06)",border:"1px solid rgba(255,255,255,0.1)",color:"#aaa",fontSize:"14px",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center" }}>−</button>
+                    <div style={{ textAlign:"center",minWidth:"32px" }}>
+                      <div style={{ fontSize:"16px",fontWeight:"800",color:dc.accent }}>{exSets}</div>
+                      <div style={{ fontSize:"9px",color:"#444",letterSpacing:"1px" }}>SETS</div>
+                    </div>
+                    <button onClick={() => {
+                      if (exSets >= 3) return;
+                      const arr = [...plan[editDay]];
+                      arr[i] = { name: exName, sets: exSets + 1 };
+                      setPlan({ ...plan, [editDay]: arr });
+                    }} style={{ width:"26px",height:"26px",borderRadius:"6px",background:"rgba(255,255,255,0.06)",border:"1px solid rgba(255,255,255,0.1)",color:"#aaa",fontSize:"14px",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center" }}>+</button>
+                  </div>
+                  {/* Delete */}
+                  <button onClick={() => setConfirmDelete({ day: editDay, index: i, name: exName })} style={{ width:"32px",height:"32px",borderRadius:"8px",background:"rgba(255,68,68,0.1)",border:"1px solid rgba(255,68,68,0.2)",color:"#ff4444",fontSize:"16px",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center" }}>🗑</button>
+                </div>
+              </div>
+            );
+          })}
 
           {/* Add new exercise */}
           <div style={{ marginTop:"20px",fontSize:"11px",color:"#444",letterSpacing:"2px",marginBottom:"10px" }}>NEUE ÜBUNG</div>
@@ -914,7 +1014,7 @@ export default function App() {
               onChange={e => setNewExName(e.target.value)}
               onKeyDown={e => {
                 if (e.key === "Enter" && newExName.trim()) {
-                  setPlan({ ...plan, [editDay]: [...(plan[editDay]||[]), newExName.trim()] });
+                  setPlan({ ...plan, [editDay]: [...(plan[editDay]||[]), { name: newExName.trim(), sets: 3 }] });
                   setNewExName("");
                 }
               }}
@@ -923,17 +1023,13 @@ export default function App() {
             />
             <button onClick={() => {
               if (!newExName.trim()) return;
-              setPlan({ ...plan, [editDay]: [...(plan[editDay]||[]), newExName.trim()] });
+              setPlan({ ...plan, [editDay]: [...(plan[editDay]||[]), { name: newExName.trim(), sets: 3 }] });
               setNewExName("");
             }} style={{ width:"52px",height:"52px",background:DAY_COLORS[editDay].dim,border:`1px solid ${DAY_COLORS[editDay].border}`,borderRadius:"12px",color:DAY_COLORS[editDay].accent,fontSize:"24px",cursor:"pointer",fontFamily:"inherit",fontWeight:"800",display:"flex",alignItems:"center",justifyContent:"center" }}>+</button>
           </div>
 
           {/* Reset */}
-          <button onClick={() => {
-            if (window.confirm(editDay + " auf Standard zurücksetzen?")) {
-              setPlan({ ...plan, [editDay]: [...DEFAULT_PLAN[editDay]] });
-            }
-          }} style={{ width:"100%",marginTop:"24px",padding:"12px",background:"transparent",border:"1px dashed rgba(255,255,255,0.08)",borderRadius:"10px",color:"#333",fontSize:"12px",fontFamily:"inherit",cursor:"pointer",letterSpacing:"1px" }}>
+          <button onClick={() => setConfirmReset(true)} style={{ width:"100%",marginTop:"24px",padding:"12px",background:"transparent",border:"1px dashed rgba(255,255,255,0.08)",borderRadius:"10px",color:"#333",fontSize:"12px",fontFamily:"inherit",cursor:"pointer",letterSpacing:"1px" }}>
             ↺ {editDay.toUpperCase()} AUF STANDARD ZURÜCKSETZEN
           </button>
         </div>
@@ -954,6 +1050,23 @@ export default function App() {
                   setConfirmDelete(null);
                   setSwipedEx(null);
                 }} style={{ flex:1,padding:"16px",background:"rgba(255,68,68,0.15)",border:"1px solid rgba(255,68,68,0.3)",borderRadius:"12px",color:"#ff4444",fontSize:"16px",fontWeight:"800",fontFamily:"inherit",cursor:"pointer" }}>LÖSCHEN ✕</button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Reset plan modal */}
+        {confirmReset && (
+          <div style={{ position:"fixed",inset:0,background:"rgba(0,0,0,0.85)",zIndex:300,display:"flex",alignItems:"flex-end" }}>
+            <div style={{ width:"100%",background:"#0d0d18",borderRadius:"20px 20px 0 0",padding:"28px 24px 48px" }}>
+              <div style={{ fontSize:"20px",fontWeight:"700",marginBottom:"8px" }}>{editDay} zurücksetzen?</div>
+              <div style={{ fontSize:"15px",color:"#666",marginBottom:"24px" }}>Der {editDay} Plan wird auf die Standard-Übungen zurückgesetzt.</div>
+              <div style={{ display:"flex",gap:"12px" }}>
+                <button onClick={() => setConfirmReset(false)} style={{ flex:1,padding:"16px",background:"rgba(255,255,255,0.06)",border:"1px solid rgba(255,255,255,0.1)",borderRadius:"12px",color:"#aaa",fontSize:"16px",fontWeight:"700",fontFamily:"inherit",cursor:"pointer" }}>ABBRECHEN</button>
+                <button onClick={() => {
+                  setPlan({ ...plan, [editDay]: [...DEFAULT_PLAN[editDay]] });
+                  setConfirmReset(false);
+                }} style={{ flex:1,padding:"16px",background:"rgba(255,149,0,0.12)",border:"1px solid rgba(255,149,0,0.3)",borderRadius:"12px",color:"#ff9500",fontSize:"16px",fontWeight:"800",fontFamily:"inherit",cursor:"pointer" }}>ZURÜCKSETZEN ↺</button>
               </div>
             </div>
           </div>
