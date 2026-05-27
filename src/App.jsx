@@ -124,6 +124,7 @@ export default function App() {
     return w;
   });
   const [historyDay, setHistoryDay] = useState("Push");
+  const [selectedSessionData, setSelectedSessionData] = useState(null);
   const [plan, setPlan] = useState(() => migratePlan(load(PLAN_KEY, DEFAULT_PLAN)));
   const [editingPlan, setEditingPlan] = useState(false);
   const [editDay, setEditDay] = useState("Push");
@@ -829,7 +830,11 @@ export default function App() {
             <>
               {/* ── VOLUME CARD ── */}
               {dayHist.length >= 1 && latestVol > 0 && (
-                <div style={{ background:c.glow,border:`1px solid ${c.border}`,borderRadius:"16px",padding:"16px",marginBottom:"20px" }}>
+                <div onClick={() => {
+                const s = dayHist[dayHist.length-1];
+                setSelectedSessionData({ ...s, day: historyDay });
+                setTab("sessionDetail");
+              }} style={{ background:c.glow,border:`1px solid ${c.border}`,borderRadius:"16px",padding:"16px",marginBottom:"20px",cursor:"pointer" }}>
                   <div style={{ display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:"4px" }}>
                     <div>
                       <div style={{ fontSize:"11px",letterSpacing:"3px",color:c.accent,marginBottom:"2px" }}>TRAININGSVOLUMEN</div>
@@ -856,6 +861,7 @@ export default function App() {
                       </div>
                     )}
                     {volDiff === 0 && <div style={{ fontSize:"13px",color:"#666" }}>Gleiches Volumen ✅</div>}
+                  <div style={{ fontSize:"10px",color:"#444",letterSpacing:"1px",marginTop:"8px" }}>ANTIPPEN FÜR DETAILS →</div>
                   </div>
 
                   {/* Volume bar chart across sessions */}
@@ -1112,6 +1118,58 @@ export default function App() {
           </div>
         )}
 
+        <BottomNav />
+      </div>
+    );
+  }
+
+  // ── SESSION DETAIL ──
+  if (tab === "sessionDetail" && selectedSessionData) {
+    const session = selectedSessionData;
+    const day = selectedSessionData.day || "Push";
+    const c = DAY_COLORS[day] || DAY_COLORS["Push"];
+    return (
+      <div style={base}><style>{G}</style>
+        <div style={{ padding:"40px 24px 16px",display:"flex",justifyContent:"space-between",alignItems:"flex-end",borderBottom:`1px solid ${c.border}` }}>
+          <div>
+            <div style={{ fontSize:"11px",letterSpacing:"4px",color:"#444",marginBottom:"4px" }}>SESSION</div>
+            <div style={{ fontSize:"28px",fontWeight:"800" }}>{formatDate(session.date)}</div>
+          </div>
+          <button onClick={() => { setTab("history"); }} style={{ padding:"10px 16px",background:"rgba(255,255,255,0.05)",border:"1px solid rgba(255,255,255,0.1)",borderRadius:"10px",color:"#888",fontSize:"13px",fontFamily:"inherit",cursor:"pointer",marginBottom:"6px" }}>← VERLAUF</button>
+        </div>
+
+        <div style={{ padding:"16px 24px" }}>
+          {Object.entries(session.exercises||{}).map(([name, ex]) => {
+            if (!ex || !ex.sets) return null;
+            const isPlank = name === "Plank";
+            const w = parseFloat(ex.weight)||0;
+            const filledSets = (ex.sets||[]).filter(s=>s!==null);
+            const totalReps = filledSets.reduce((a,s)=>a+s,0);
+            const vol = isPlank ? null : w * totalReps;
+            return (
+              <div key={name} style={{ background:"rgba(255,255,255,0.03)",border:"1px solid rgba(255,255,255,0.07)",borderRadius:"14px",padding:"14px 16px",marginBottom:"10px" }}>
+                <div style={{ display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:"10px" }}>
+                  <div style={{ fontSize:"17px",fontWeight:"700" }}>{name}</div>
+                  {!isPlank && <div style={{ fontSize:"20px",fontWeight:"800",color:c.accent }}>{w}<span style={{ fontSize:"11px",color:"#555" }}>kg</span></div>}
+                </div>
+                <div style={{ display:"flex",gap:"8px",marginBottom: vol ? "8px" : "0" }}>
+                  {filledSets.map((reps,i) => (
+                    <div key={i} style={{ flex:1,padding:"8px 6px",background:"rgba(34,197,94,0.08)",border:"1px solid rgba(34,197,94,0.2)",borderRadius:"10px",textAlign:"center" }}>
+                      <div style={{ fontSize:"10px",color:"#555",letterSpacing:"1px",marginBottom:"2px" }}>SATZ {i+1}</div>
+                      <div style={{ fontSize:"20px",fontWeight:"800",color:"#22c55e" }}>{isPlank?`${reps}s`:reps}</div>
+                      {!isPlank && <div style={{ fontSize:"9px",color:"#444" }}>REPS</div>}
+                    </div>
+                  ))}
+                </div>
+                {vol !== null && (
+                  <div style={{ fontSize:"11px",color:"#555",marginTop:"6px" }}>
+                    Volumen: <span style={{ color:c.accent,fontWeight:"700" }}>{vol}kg</span>
+                  </div>
+                )}
+              </div>
+            );
+          })}
+        </div>
         <BottomNav />
       </div>
     );
