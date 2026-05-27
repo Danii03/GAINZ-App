@@ -130,6 +130,7 @@ export default function App() {
   const [newExName, setNewExName] = useState("");
   const [confirmDelete, setConfirmDelete] = useState(null);
   const [confirmCancel, setConfirmCancel] = useState(false);
+  const [confirmSwitch, setConfirmSwitch] = useState(null); // day to switch to
   const [confirmReset, setConfirmReset] = useState(false); // {day, index, name}
   const [bwInput, setBwInput] = useState("");
   const [bwSaved, setBwSaved] = useState(false);
@@ -184,6 +185,10 @@ export default function App() {
 
   // Workout helpers
   const startDay = (day) => {
+    if (workout && workout.day !== day) {
+      setConfirmSwitch(day);
+      return;
+    }
     if (workout && workout.day === day) {
       // Resume but sync exercises with current plan
       const synced = { ...workout.exercises };
@@ -285,7 +290,14 @@ export default function App() {
         )}
         <div style={{ background:"rgba(8,8,16,0.97)",borderTop:"1px solid rgba(255,255,255,0.06)",display:"flex",padding:"10px 16px 24px",gap:"8px",backdropFilter:"blur(16px)" }}>
           {[{id:"home",label:"HOME",icon:"⚡"},{id:"timer",label:"TIMER",icon:"⏱"},{id:"history",label:"VERLAUF",icon:"📊"},{id:"settings",label:"PLAN",icon:"⚙️"}].map(t => (
-            <button key={t.id} onClick={() => setTab(t.id)} style={{ flex:1,padding:"10px 6px",background:tab===t.id?"rgba(255,255,255,0.07)":"transparent",border:`1px solid ${tab===t.id?"rgba(255,255,255,0.15)":"rgba(255,255,255,0.04)"}`,borderRadius:"12px",color:tab===t.id?"#e8e8f0":"#444",fontSize:"12px",fontWeight:"700",letterSpacing:"1px",fontFamily:"inherit",cursor:"pointer" }}>{t.icon} {t.label}</button>
+            <button key={t.id} onClick={() => {
+              if (t.id === "home" && workout) {
+                if (activeDay) setTab("workout");
+                else resumeWorkout();
+              } else {
+                setTab(t.id);
+              }
+            }} style={{ flex:1,padding:"10px 6px",background:(t.id==="home"&&workout?tab==="workout":tab===t.id)?"rgba(255,255,255,0.07)":"transparent",border:`1px solid ${(t.id==="home"&&workout?tab==="workout":tab===t.id)?"rgba(255,255,255,0.15)":"rgba(255,255,255,0.04)"}`,borderRadius:"12px",color:(t.id==="home"&&workout?tab==="workout":tab===t.id)?"#e8e8f0":"#444",fontSize:"12px",fontWeight:"700",letterSpacing:"1px",fontFamily:"inherit",cursor:"pointer" }}>{t.icon} {t.label}</button>
           ))}
         </div>
       </div>
@@ -327,6 +339,34 @@ export default function App() {
           );
         })}
       </div>
+      {/* Switch workout confirmation */}
+      {confirmSwitch && (
+        <div style={{ position:"fixed",inset:0,background:"rgba(0,0,0,0.85)",zIndex:300,display:"flex",alignItems:"flex-end" }}>
+          <div style={{ width:"100%",background:"#0d0d18",borderRadius:"20px 20px 0 0",padding:"28px 24px 48px" }}>
+            <div style={{ fontSize:"20px",fontWeight:"700",marginBottom:"8px" }}>Workout wechseln?</div>
+            <div style={{ fontSize:"15px",color:"#666",marginBottom:"24px" }}>
+              Du hast ein aktives <span style={{ color:"#e8e8f0",fontWeight:"600" }}>{workout?.day}</span> Workout. Wenn du zu <span style={{ color:"#e8e8f0",fontWeight:"600" }}>{confirmSwitch}</span> wechselst, geht ungespeicherter Fortschritt verloren.
+            </div>
+            <div style={{ display:"flex",gap:"12px" }}>
+              <button onClick={() => setConfirmSwitch(null)} style={{ flex:1,padding:"16px",background:"rgba(255,255,255,0.06)",border:"1px solid rgba(255,255,255,0.1)",borderRadius:"12px",color:"#aaa",fontSize:"16px",fontWeight:"700",fontFamily:"inherit",cursor:"pointer" }}>ABBRECHEN</button>
+              <button onClick={() => {
+                const day = confirmSwitch;
+                setConfirmSwitch(null);
+                const ex = {};
+                plan[day].forEach(exObj => {
+                  const n = exObj.name||exObj;
+                  const numSets = Math.min(Math.max(exObj.sets||3,1),3);
+                  ex[n] = { weight:"", sets: Array(numSets).fill(null), done:false, activeSet:0 };
+                });
+                setWorkout({ day, startedAt: new Date().toISOString(), exercises: ex });
+                setActiveDay(day);
+                setTab("workout");
+              }} style={{ flex:1,padding:"16px",background:"rgba(255,68,68,0.12)",border:"1px solid rgba(255,68,68,0.3)",borderRadius:"12px",color:"#ff4444",fontSize:"16px",fontWeight:"800",fontFamily:"inherit",cursor:"pointer" }}>WECHSELN ✕</button>
+            </div>
+          </div>
+        </div>
+      )}
+
       <BottomNav />
     </div>
   );
