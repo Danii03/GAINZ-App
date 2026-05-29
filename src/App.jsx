@@ -105,7 +105,9 @@ function Confetti({ active }) {
   return (
     <div style={{ position:"fixed",inset:0,zIndex:999,pointerEvents:"none",overflow:"hidden" }}>
       <style>{`
-        @keyframes confetti-fall {
+        * { -webkit-tap-highlight-color: transparent; }
+    body { overscroll-behavior: none; }
+    @keyframes confetti-fall {
           0%   { transform: translateY(-20px) rotate(0deg) translateX(0); opacity: 1; }
           80%  { opacity: 1; }
           100% { transform: translateY(110vh) rotate(720deg) translateX(var(--drift)); opacity: 0; }
@@ -131,11 +133,23 @@ function Confetti({ active }) {
 
 function playDoneSound2() {
   try {
-    if (chimeAudio) {
-      chimeAudio.currentTime = 0;
-      chimeAudio.play().catch(e => console.log("Audio blocked:", e));
-    }
-  } catch (e) { console.log("Audio error:", e); }
+    // Web Audio API mixes with Spotify/Music instead of interrupting it
+    const ctx = new (window.AudioContext || window.webkitAudioContext)();
+    fetch("/chime.wav")
+      .then(r => r.arrayBuffer())
+      .then(buf => ctx.decodeAudioData(buf))
+      .then(decoded => {
+        const src = ctx.createBufferSource();
+        src.buffer = decoded;
+        src.connect(ctx.destination);
+        src.start(0);
+      })
+      .catch(() => {
+        if (chimeAudio) { chimeAudio.currentTime = 0; chimeAudio.play().catch(()=>{}); }
+      });
+  } catch (e) {
+    if (chimeAudio) { chimeAudio.currentTime = 0; chimeAudio.play().catch(()=>{}); }
+  }
 }
 
 export default function App() {
@@ -184,6 +198,7 @@ export default function App() {
   const [showConfetti, setShowConfetti] = useState(false);
   const [timerSeconds, setTimerSeconds] = useState(0);
   const [timerTarget,  setTimerTarget]  = useState(120);
+  const timerTargetRef = useRef(120);
   const [timerRunning, setTimerRunning] = useState(false);
   const [timerDone,    setTimerDone]    = useState(false);
   const [customTimerInput, setCustomTimerInput] = useState("");
@@ -196,17 +211,19 @@ export default function App() {
   useEffect(() => save(ACTIVE_KEY, workout),  [workout]);
   useEffect(() => save(PLAN_KEY, plan), [plan]);
   useEffect(() => save("gainz_autotimer", autoTimer), [autoTimer]);
+  useEffect(() => { timerTargetRef.current = timerTarget; }, [timerTarget]);
 
   useEffect(() => {
     if (timerRunning) {
       startTimeRef.current = Date.now();
       intervalRef.current = setInterval(() => {
         const elapsed = elapsedAtPauseRef.current + Math.floor((Date.now() - startTimeRef.current) / 1000);
-        if (elapsed >= timerTarget) {
+        const target = timerTargetRef.current;
+        if (elapsed >= target) {
           clearInterval(intervalRef.current);
           setTimerRunning(false);
           setTimerDone(true);
-          setTimerSeconds(timerTarget);
+          setTimerSeconds(target);
           elapsedAtPauseRef.current = 0;
           playDoneSound2();
           setShowConfetti(true);
@@ -224,7 +241,7 @@ export default function App() {
       clearInterval(intervalRef.current);
     }
     return () => clearInterval(intervalRef.current);
-  }, [timerRunning, timerTarget]);
+  }, [timerRunning]);
 
   const resetTimer = (target) => {
     clearInterval(intervalRef.current);
@@ -288,10 +305,24 @@ export default function App() {
       for (let i = 0; i < 3; i++) { if (sets[i] === null) { next = i; break; } }
       return { ...w, exercises: { ...w.exercises, [name]: { ...ex, sets, activeSet: next } } };
     });
-    // Auto-start rest timer if enabled - no tab switch
+    // Auto-start rest timer if enabled - but not on the very last set of the workout
     if (autoTimer) {
-      resetTimer(120);
-      setTimeout(() => setTimerRunning(true), 50);
+      setWorkout(current => {
+        if (!current) return current;
+        const planExercises = (plan[current.day]||[]).map(e => e.name||e);
+        const notDone = planExercises.filter(n => !current.exercises[n]?.done);
+        // Check if this is the last set of the last undone exercise
+        const isLastExercise = notDone.length === 1;
+        if (isLastExercise) {
+          const lastEx = current.exercises[notDone[0]];
+          const filledSets = (lastEx?.sets||[]).filter(s => s !== null).length;
+          const totalSets = (lastEx?.sets||[]).length;
+          if (filledSets >= totalSets - 1) return current; // last set → no timer
+        }
+        resetTimer(120);
+        setTimeout(() => setTimerRunning(true), 50);
+        return current;
+      });
     }
   };
   const selectSet  = (name, i) => setWorkout(w => ({ ...w, exercises: { ...w.exercises, [name]: { ...w.exercises[name], activeSet: i } } }));
@@ -328,7 +359,7 @@ export default function App() {
     const mins = Math.floor(remaining / 60);
     const secs = remaining % 60;
     return (
-      <div style={{ position:"fixed",bottom:0,left:0,right:0,zIndex:100 }}>
+      <div style={{ position:"fixed",bottom:0,left:0,right:0,zIndex:100,WebkitTransform:"translateZ(0)",transform:"translateZ(0)" }}>
         {showBanner && (
           <button onClick={() => setTab("timer")} style={{
             width:"100%", padding:"10px 20px",
@@ -626,7 +657,22 @@ export default function App() {
                       </>
                     ) : (
                       <>
-                        {lastSession && <div style={{ fontSize:"12px",color:"#444",marginBottom:"12px" }}>LETZTES MAL: {lastSession.weight}kg · {(lastSession.sets||[]).filter(s=>s!==null).map(r=>`${r} Reps`).join(" / ")}</div>}
+                        {lastSession && (() => {
+                      const lastAdvice = getAdvice(lastSession.sets||[]);
+                      return (
+                        <div style={{ display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:"12px",padding:"8px 10px",background:"rgba(255,255,255,0.03)",borderRadius:"8px" }}>
+                          <div style={{ fontSize:"12px",color:"#444" }}>
+                            LETZTES MAL: {lastSession.weight}kg · {(lastSession.sets||[]).filter(s=>s!==null).map(r=>`${r} Reps`).join(" / ")}
+                          </div>
+                          {lastAdvice && (
+                            <div style={{ display:"flex",alignItems:"center",gap:"4px",flexShrink:0,marginLeft:"8px" }}>
+                              <span style={{ fontSize:"16px" }}>{lastAdvice.emoji}</span>
+                              <span style={{ fontSize:"10px",color:lastAdvice.color,fontWeight:"700",letterSpacing:"0.5px" }}>{lastAdvice.text}</span>
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })()}
                         <div style={{ display:"flex",alignItems:"center",gap:"10px",marginBottom:"14px" }}>
                           <div style={{ fontSize:"12px",color:"#555",letterSpacing:"2px",width:"60px" }}>GEWICHT</div>
                           <div style={{ display:"flex",alignItems:"center",gap:"8px" }}>
@@ -1266,11 +1312,15 @@ export default function App() {
                     </div>
                   ))}
                 </div>
-                {vol !== null && (
-                  <div style={{ fontSize:"11px",color:"#555",marginTop:"6px" }}>
-                    Volumen: <span style={{ color:c.accent,fontWeight:"700" }}>{vol}kg</span>
-                  </div>
-                )}
+                {vol !== null && (() => {
+                  const adv = getAdvice(ex.sets||[]);
+                  return (
+                    <div style={{ display:"flex",justifyContent:"space-between",alignItems:"center",marginTop:"8px" }}>
+                      <div style={{ fontSize:"11px",color:"#555" }}>Volumen: <span style={{ color:c.accent,fontWeight:"700" }}>{vol}kg</span></div>
+                      {adv && <div style={{ display:"flex",alignItems:"center",gap:"4px" }}><span style={{ fontSize:"15px" }}>{adv.emoji}</span><span style={{ fontSize:"10px",color:adv.color,fontWeight:"700" }}>{adv.text}</span></div>}
+                    </div>
+                  );
+                })()}
               </div>
             );
           })}
